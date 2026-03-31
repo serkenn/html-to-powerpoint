@@ -7,74 +7,57 @@ app.innerHTML = `
   <main class="shell">
     <section class="hero">
       <div>
-        <p class="eyebrow">Cloudflare Pages Ready</p>
         <h1>HTML から PowerPoint / PDF を生成</h1>
         <p class="lede">
-          HTML ファイルを読み込み、プレビューし、そのまま 1 スライドの
-          PPTX・PDF・PNG に変換してダウンロードできます。
+          複数の HTML を読み込み、ページ一覧から切り替えながら変換できます。
         </p>
-      </div>
-      <div class="hero-card">
-        <div class="metric">
-          <span>実行場所</span>
-          <strong>ブラウザ内</strong>
-        </div>
-        <div class="metric">
-          <span>デプロイ先</span>
-          <strong>Cloudflare Pages</strong>
-        </div>
-        <div class="metric">
-          <span>出力形式</span>
-          <strong>PPTX / PDF / PNG</strong>
-        </div>
       </div>
     </section>
 
     <section class="workspace">
-      <div class="panel controls">
+      <aside class="panel sidebar">
         <label class="dropzone" id="dropzone">
-          <input id="fileInput" type="file" accept=".html,text/html" hidden />
-          <span class="dropzone-title">HTML ファイルを選択</span>
-          <span class="dropzone-copy">ドラッグ&ドロップにも対応</span>
+          <input id="fileInput" type="file" accept=".html,text/html" multiple hidden />
+          <span class="dropzone-title">HTML ファイルを追加</span>
+          <span class="dropzone-copy">複数選択とドラッグ&ドロップに対応</span>
         </label>
 
         <div class="actions">
-          <button id="loadSampleButton" class="ghost">サンプルを読み込む</button>
-          <button id="exportPngButton" disabled>PNG を出力</button>
-          <button id="exportPdfButton" disabled>PDF を出力</button>
-          <button id="exportPptxButton" disabled>PPTX を出力</button>
+          <button id="loadSampleButton" class="ghost">サンプルを追加</button>
+          <button id="exportPngButton" disabled>PNG</button>
+          <button id="exportPdfButton" disabled>PDF</button>
+          <button id="exportPptxButton" disabled>PPTX</button>
         </div>
 
-        <dl class="meta">
-          <div>
-            <dt>ファイル名</dt>
-            <dd id="fileName">未選択</dd>
-          </div>
-          <div>
-            <dt>スライドサイズ</dt>
-            <dd id="slideSize">-</dd>
-          </div>
-          <div>
-            <dt>タイトル</dt>
-            <dd id="documentTitle">-</dd>
-          </div>
-        </dl>
+        <div class="sidebar-header">
+          <strong>Pages</strong>
+          <span id="pageCount">0</span>
+        </div>
 
-        <p class="status" id="status">HTML を読み込むとプレビューを生成します。</p>
-      </div>
+        <div id="pageList" class="page-list"></div>
+        <p class="status" id="status">HTML を読み込むとページ一覧とプレビューを生成します。</p>
+      </aside>
 
-      <div class="panel preview-panel">
+      <section class="panel preview-panel">
         <div class="preview-toolbar">
-          <span>Preview</span>
-          <span id="scaleLabel">fit</span>
+          <div class="preview-meta">
+            <strong id="documentTitle">-</strong>
+            <span id="fileName">未選択</span>
+          </div>
+          <div class="preview-side-meta">
+            <span id="slideSize">-</span>
+            <span id="scaleLabel">fit</span>
+          </div>
         </div>
         <div class="preview-stage">
-          <div id="slideViewport" class="viewport empty">
-            <div id="previewRoot" class="preview-root"></div>
-            <p class="placeholder">ここに変換対象の HTML が表示されます。</p>
+          <div id="previewCanvas" class="preview-canvas">
+            <div id="slideViewport" class="viewport empty">
+              <div id="previewRoot" class="preview-root"></div>
+              <p class="placeholder">左からページを選択するとここに表示されます。</p>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
     </section>
   </main>
 `;
@@ -88,13 +71,16 @@ const exportPptxButton = document.querySelector('#exportPptxButton');
 const fileName = document.querySelector('#fileName');
 const slideSize = document.querySelector('#slideSize');
 const documentTitle = document.querySelector('#documentTitle');
+const pageCount = document.querySelector('#pageCount');
+const pageList = document.querySelector('#pageList');
 const status = document.querySelector('#status');
 const previewRoot = document.querySelector('#previewRoot');
 const slideViewport = document.querySelector('#slideViewport');
+const previewCanvas = document.querySelector('#previewCanvas');
 const scaleLabel = document.querySelector('#scaleLabel');
 
-let currentFileBase = 'slide';
-let currentDimensions = { width: 1280, height: 720 };
+let slides = [];
+let activeSlideId = null;
 let exportModulesPromise;
 
 const SAMPLE_PATH = '/samples/deck.html';
@@ -106,6 +92,10 @@ const REMOTE_EXPORT_ENDPOINTS = {
 function setStatus(message, isError = false) {
   status.textContent = message;
   status.dataset.error = String(isError);
+}
+
+function getActiveSlide() {
+  return slides.find((slide) => slide.id === activeSlideId) || null;
 }
 
 function setExportEnabled(enabled) {
@@ -153,10 +143,12 @@ function buildPreviewMarkup(doc) {
     if (node.tagName === 'SCRIPT') {
       return false;
     }
+
     if (node.tagName === 'LINK') {
       const rel = node.getAttribute('rel') || '';
       return rel.includes('stylesheet');
     }
+
     return node.tagName === 'STYLE';
   });
 
@@ -174,49 +166,181 @@ function buildPreviewMarkup(doc) {
   `;
 }
 
+function createSlideFromHtml(html, sourceName) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const title = doc.querySelector('title')?.textContent?.trim() || sourceName;
+
+  return {
+    id: crypto.randomUUID(),
+    sourceName,
+    fileBase: sourceName.replace(/\.html?$/i, '') || 'slide',
+    title,
+    dimensions: extractSlideDimensions(doc),
+    previewMarkup: buildPreviewMarkup(doc)
+  };
+}
+
 function fitPreview(dimensions) {
-  const stage = slideViewport.parentElement;
+  const stage = previewCanvas.parentElement;
   const { clientWidth, clientHeight } = stage;
   const scale = Math.min(clientWidth / dimensions.width, clientHeight / dimensions.height, 1);
+  const scaledWidth = dimensions.width * scale;
+  const scaledHeight = dimensions.height * scale;
+
+  previewCanvas.style.width = `${scaledWidth}px`;
+  previewCanvas.style.height = `${scaledHeight}px`;
   slideViewport.style.width = `${dimensions.width}px`;
   slideViewport.style.height = `${dimensions.height}px`;
+  slideViewport.style.left = '50%';
+  slideViewport.style.top = '50%';
   slideViewport.style.transform = `scale(${scale})`;
   scaleLabel.textContent = `${Math.round(scale * 100)}%`;
 }
 
-function renderDocument(html, sourceName) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  const title = doc.querySelector('title')?.textContent?.trim() || sourceName;
-  const dimensions = extractSlideDimensions(doc);
-  const previewMarkup = buildPreviewMarkup(doc);
+function renderActiveSlide() {
+  const activeSlide = getActiveSlide();
 
-  currentFileBase = sourceName.replace(/\.html?$/i, '') || 'slide';
-  currentDimensions = dimensions;
-  fileName.textContent = sourceName;
-  slideSize.textContent = `${dimensions.width} x ${dimensions.height}`;
-  documentTitle.textContent = title;
+  if (!activeSlide) {
+    fileName.textContent = '未選択';
+    slideSize.textContent = '-';
+    documentTitle.textContent = '-';
+    previewRoot.innerHTML = '';
+    previewCanvas.style.width = '';
+    previewCanvas.style.height = '';
+    slideViewport.classList.add('empty');
+    slideViewport.style.width = '';
+    slideViewport.style.height = '';
+    slideViewport.style.transform = '';
+    scaleLabel.textContent = 'fit';
+    setExportEnabled(false);
+    return;
+  }
 
-  previewRoot.innerHTML = previewMarkup;
+  fileName.textContent = activeSlide.sourceName;
+  slideSize.textContent = `${activeSlide.dimensions.width} x ${activeSlide.dimensions.height}`;
+  documentTitle.textContent = activeSlide.title;
+  previewRoot.innerHTML = activeSlide.previewMarkup;
   slideViewport.classList.remove('empty');
-  fitPreview(dimensions);
+  fitPreview(activeSlide.dimensions);
   setExportEnabled(true);
-  setStatus('プレビューを生成しました。PPTX / PDF / PNG を出力できます。');
 }
 
-async function loadHtmlText(html, sourceName) {
-  try {
-    renderDocument(html, sourceName);
-  } catch (error) {
-    console.error(error);
-    setExportEnabled(false);
-    setStatus('HTML の解析に失敗しました。レイアウト構造を確認してください。', true);
+function renderPageList() {
+  pageCount.textContent = String(slides.length);
+
+  if (slides.length === 0) {
+    pageList.innerHTML = '<p class="page-list-empty">ページはまだありません。</p>';
+    return;
+  }
+
+  pageList.innerHTML = slides
+    .map((slide, index) => buildPageCard(slide, index))
+    .join('');
+}
+
+function buildPageCard(slide, index) {
+  const thumbScale = Math.min(180 / slide.dimensions.width, 120 / slide.dimensions.height, 1);
+  const thumbWidth = slide.dimensions.width * thumbScale;
+  const thumbHeight = slide.dimensions.height * thumbScale;
+  const isActive = slide.id === activeSlideId;
+
+  return `
+    <article class="page-card ${isActive ? 'active' : ''}" data-slide-id="${slide.id}">
+      <button class="page-card-main" type="button" data-action="select" data-slide-id="${slide.id}">
+        <span class="page-index">${index + 1}</span>
+        <span class="page-thumb-stage">
+          <span class="page-thumb-canvas" style="width:${thumbWidth}px;height:${thumbHeight}px;">
+            <span
+              class="page-thumb-viewport"
+              style="width:${slide.dimensions.width}px;height:${slide.dimensions.height}px;transform:scale(${thumbScale});"
+            >
+              ${slide.previewMarkup}
+            </span>
+          </span>
+        </span>
+        <span class="page-card-text">
+          <strong>${escapeHtml(slide.title)}</strong>
+          <span>${escapeHtml(slide.sourceName)}</span>
+        </span>
+      </button>
+      <button class="page-delete" type="button" data-action="delete" data-slide-id="${slide.id}" aria-label="ページを削除">
+        削除
+      </button>
+    </article>
+  `;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function refreshUI() {
+  renderPageList();
+  renderActiveSlide();
+}
+
+function addSlides(newSlides) {
+  slides = [...slides, ...newSlides];
+  activeSlideId = newSlides.at(-1)?.id || activeSlideId;
+  refreshUI();
+}
+
+function removeSlide(slideId) {
+  const index = slides.findIndex((slide) => slide.id === slideId);
+  if (index === -1) {
+    return;
+  }
+
+  const wasActive = activeSlideId === slideId;
+  slides = slides.filter((slide) => slide.id !== slideId);
+
+  if (wasActive) {
+    activeSlideId = slides[index]?.id || slides[index - 1]?.id || null;
+  }
+
+  refreshUI();
+  if (slides.length === 0) {
+    setStatus('ページをすべて削除しました。');
+  } else {
+    setStatus('ページを削除しました。');
   }
 }
 
-async function readFile(file) {
-  const html = await file.text();
-  await loadHtmlText(html, file.name);
+function selectSlide(slideId) {
+  if (activeSlideId === slideId) {
+    return;
+  }
+
+  activeSlideId = slideId;
+  refreshUI();
+}
+
+async function readFiles(fileList) {
+  const files = [...fileList].filter((file) => /\.html?$/i.test(file.name));
+  if (files.length === 0) {
+    setStatus('HTML ファイルを選択してください。', true);
+    return;
+  }
+
+  try {
+    const newSlides = [];
+    for (const file of files) {
+      const html = await file.text();
+      newSlides.push(createSlideFromHtml(html, file.name));
+    }
+
+    addSlides(newSlides);
+    setStatus(`${newSlides.length} 件のページを追加しました。`);
+  } catch (error) {
+    console.error(error);
+    setStatus('HTML の解析に失敗しました。レイアウト構造を確認してください。', true);
+  }
 }
 
 function downloadBlob(blob, filename) {
@@ -229,8 +353,9 @@ function downloadBlob(blob, filename) {
 }
 
 async function requestServerExport(format) {
+  const activeSlide = getActiveSlide();
   const endpoint = REMOTE_EXPORT_ENDPOINTS[format];
-  if (!endpoint) {
+  if (!activeSlide || !endpoint) {
     throw new Error(`Unsupported export format: ${format}`);
   }
 
@@ -240,10 +365,10 @@ async function requestServerExport(format) {
       'content-type': 'application/json'
     },
     body: JSON.stringify({
-      html: previewRoot.innerHTML,
-      fileName: currentFileBase,
-      title: documentTitle.textContent || currentFileBase,
-      dimensions: currentDimensions
+      html: activeSlide.previewMarkup,
+      fileName: activeSlide.fileBase,
+      title: activeSlide.title,
+      dimensions: activeSlide.dimensions
     })
   });
 
@@ -256,14 +381,19 @@ async function requestServerExport(format) {
 }
 
 async function exportPreviewAsPngBlob() {
+  const activeSlide = getActiveSlide();
+  if (!activeSlide) {
+    throw new Error('No active slide');
+  }
+
   const { toPng } = await loadExportModules();
   const dataUrl = await toPng(previewRoot, {
     cacheBust: true,
     pixelRatio: 2,
-    width: currentDimensions.width,
-    height: currentDimensions.height,
-    canvasWidth: currentDimensions.width * 2,
-    canvasHeight: currentDimensions.height * 2
+    width: activeSlide.dimensions.width,
+    height: activeSlide.dimensions.height,
+    canvasWidth: activeSlide.dimensions.width * 2,
+    canvasHeight: activeSlide.dimensions.height * 2
   });
 
   const response = await fetch(dataUrl);
@@ -282,44 +412,50 @@ async function withBusyState(task) {
     console.error(error);
     setStatus('出力に失敗しました。外部画像やフォント参照を確認してください。', true);
   } finally {
-    setExportEnabled(Boolean(previewRoot.innerHTML));
+    setExportEnabled(Boolean(getActiveSlide()));
     loadSampleButton.disabled = false;
   }
 }
 
 async function exportPng() {
+  const activeSlide = getActiveSlide();
+  if (!activeSlide) {
+    return;
+  }
+
   await withBusyState(async () => {
     setStatus('PNG を生成しています...');
     const blob = await exportPreviewAsPngBlob();
-    downloadBlob(blob, `${currentFileBase}.png`);
+    downloadBlob(blob, `${activeSlide.fileBase}.png`);
     setStatus('PNG を出力しました。');
   });
 }
 
 async function exportPdf() {
+  const activeSlide = getActiveSlide();
+  if (!activeSlide) {
+    return;
+  }
+
   await withBusyState(async () => {
     setStatus('PDF を生成しています...');
     const blob = await requestServerExport('pdf');
-    downloadBlob(blob, `${currentFileBase}.pdf`);
+    downloadBlob(blob, `${activeSlide.fileBase}.pdf`);
     setStatus('PDF を出力しました。');
   });
 }
 
 async function exportPptx() {
+  const activeSlide = getActiveSlide();
+  if (!activeSlide) {
+    return;
+  }
+
   await withBusyState(async () => {
     setStatus('PPTX を生成しています...');
     const blob = await requestServerExport('pptx');
-    downloadBlob(blob, `${currentFileBase}.pptx`);
+    downloadBlob(blob, `${activeSlide.fileBase}.pptx`);
     setStatus('PPTX を出力しました。');
-  });
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
   });
 }
 
@@ -335,16 +471,27 @@ dropzone.addEventListener('dragleave', () => {
 dropzone.addEventListener('drop', async (event) => {
   event.preventDefault();
   dropzone.classList.remove('dragging');
-  const [file] = event.dataTransfer.files;
-  if (file) {
-    await readFile(file);
-  }
+  await readFiles(event.dataTransfer.files);
 });
 
 fileInput.addEventListener('change', async (event) => {
-  const [file] = event.target.files;
-  if (file) {
-    await readFile(file);
+  await readFiles(event.target.files);
+  event.target.value = '';
+});
+
+pageList.addEventListener('click', (event) => {
+  const target = event.target.closest('[data-action]');
+  if (!target) {
+    return;
+  }
+
+  const slideId = target.dataset.slideId;
+  if (target.dataset.action === 'select') {
+    selectSlide(slideId);
+  }
+
+  if (target.dataset.action === 'delete') {
+    removeSlide(slideId);
   }
 });
 
@@ -353,7 +500,8 @@ loadSampleButton.addEventListener('click', async () => {
     setStatus('サンプル HTML を読み込んでいます...');
     const response = await fetch(SAMPLE_PATH);
     const html = await response.text();
-    await loadHtmlText(html, 'sample-deck.html');
+    addSlides([createSlideFromHtml(html, `sample-${slides.length + 1}.html`)]);
+    setStatus('サンプルページを追加しました。');
   });
 });
 
@@ -361,4 +509,11 @@ exportPngButton.addEventListener('click', exportPng);
 exportPdfButton.addEventListener('click', exportPdf);
 exportPptxButton.addEventListener('click', exportPptx);
 
-window.addEventListener('resize', () => fitPreview(currentDimensions));
+window.addEventListener('resize', () => {
+  const activeSlide = getActiveSlide();
+  if (activeSlide) {
+    fitPreview(activeSlide.dimensions);
+  }
+});
+
+refreshUI();
