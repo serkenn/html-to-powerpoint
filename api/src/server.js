@@ -627,8 +627,11 @@ async function drawPdfItem(doc, item, fontMap) {
     doc.font(first?.options?.pdfFont || font.pdfName);
     doc.fontSize(first?.options?.fontSize || 12);
     doc.fillColor(`#${first?.options?.color || '000000'}`);
+    const wrappedText = wrapTextForPdf(doc, normalizeTextRuns(item.textRuns), frame.width, {
+      characterSpacing: first?.options?.charSpace || 0
+    });
     doc.text(
-      normalizeTextRuns(item.textRuns),
+      wrappedText,
       frame.left,
       frame.top,
       {
@@ -649,6 +652,33 @@ function normalizeTextRuns(runs) {
     .join('')
     .replace(/\s+\n/g, '\n')
     .trimEnd();
+}
+
+function wrapTextForPdf(doc, text, maxWidth, measureOptions) {
+  const paragraphs = text.split('\n');
+  const wrapped = paragraphs.map((paragraph) => wrapParagraphForPdf(doc, paragraph, maxWidth, measureOptions));
+  return wrapped.join('\n');
+}
+
+function wrapParagraphForPdf(doc, text, maxWidth, measureOptions) {
+  if (!text) {
+    return '';
+  }
+
+  let line = '';
+  let result = '';
+
+  for (const char of Array.from(text)) {
+    const candidate = line + char;
+    if (line && doc.widthOfString(candidate, measureOptions) > maxWidth) {
+      result += `${line}\n`;
+      line = char;
+    } else {
+      line = candidate;
+    }
+  }
+
+  return result + line;
 }
 
 function resolveSystemFont(candidates) {
