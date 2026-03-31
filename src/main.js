@@ -410,7 +410,7 @@ async function withBusyState(task) {
     await task();
   } catch (error) {
     console.error(error);
-    setStatus('出力に失敗しました。外部画像やフォント参照を確認してください。', true);
+    setStatus(`出力に失敗しました: ${error.message}`, true);
   } finally {
     setExportEnabled(Boolean(getActiveSlide()));
     loadSampleButton.disabled = false;
