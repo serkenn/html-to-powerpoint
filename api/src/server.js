@@ -627,21 +627,17 @@ async function drawPdfItem(doc, item, fontMap) {
     doc.font(first?.options?.pdfFont || font.pdfName);
     doc.fontSize(first?.options?.fontSize || 12);
     doc.fillColor(`#${first?.options?.color || '000000'}`);
-    const wrappedText = wrapTextForPdf(doc, normalizeTextRuns(item.textRuns), frame.width, {
+    const measureOptions = {
       characterSpacing: first?.options?.charSpace || 0
+    };
+    const lineHeight = first?.options?.lineHeight || 14;
+    const wrappedLines = wrapTextForPdf(doc, normalizeTextRuns(item.textRuns), frame.width, measureOptions)
+      .split('\n');
+    drawPdfLines(doc, wrappedLines, frame, {
+      align: item.align,
+      lineHeight,
+      measureOptions
     });
-    doc.text(
-      wrappedText,
-      frame.left,
-      frame.top,
-      {
-        width: frame.width,
-        height: frame.height,
-        align: item.align,
-        lineGap: Math.max(0, (first?.options?.lineHeight || 14) - (first?.options?.fontSize || 12)),
-        characterSpacing: first?.options?.charSpace || 0
-      }
-    );
     doc.restore();
   }
 }
@@ -679,6 +675,32 @@ function wrapParagraphForPdf(doc, text, maxWidth, measureOptions) {
   }
 
   return result + line;
+}
+
+function drawPdfLines(doc, lines, frame, options) {
+  const { align, lineHeight, measureOptions } = options;
+  let currentY = frame.top;
+
+  for (const line of lines) {
+    if (currentY + lineHeight > frame.top + frame.height) {
+      break;
+    }
+
+    const lineWidth = doc.widthOfString(line, measureOptions);
+    let currentX = frame.left;
+
+    if (align === 'center') {
+      currentX = frame.left + Math.max(0, (frame.width - lineWidth) / 2);
+    } else if (align === 'right') {
+      currentX = frame.left + Math.max(0, frame.width - lineWidth);
+    }
+
+    doc.text(line, currentX, currentY, {
+      lineBreak: false,
+      characterSpacing: measureOptions.characterSpacing || 0
+    });
+    currentY += lineHeight;
+  }
 }
 
 function resolveSystemFont(candidates) {
