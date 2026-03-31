@@ -3,7 +3,10 @@ FROM node:22-bookworm-slim
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends fonts-ipafont-gothic fonts-noto-cjk fonts-montserrat \
+  && apt-get install -y --no-install-recommends curl fonts-ipafont-gothic fonts-noto-cjk \
+  && mkdir -p /usr/local/share/fonts/montserrat \
+  && curl -fsSL https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/Montserrat-Regular.ttf \
+    -o /usr/local/share/fonts/montserrat/Montserrat-Regular.ttf \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./

@@ -415,6 +415,7 @@ function pickSupportedFont(fontFamilies, fontMap) {
 async function collectFonts(root) {
   const map = new Map();
   const montserratFontPath = resolveSystemFont([
+    '/usr/local/share/fonts/montserrat/Montserrat-Regular.ttf',
     '/usr/share/fonts/truetype/montserrat/Montserrat-Regular.ttf',
     '/usr/share/fonts/opentype/montserrat/Montserrat-Regular.otf'
   ]);
