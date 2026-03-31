@@ -98,6 +98,10 @@ let currentDimensions = { width: 1280, height: 720 };
 let exportModulesPromise;
 
 const SAMPLE_PATH = '/samples/deck.html';
+const REMOTE_EXPORT_ENDPOINTS = {
+  pdf: '/api/render/pdf',
+  pptx: '/api/render/pptx'
+};
 
 function setStatus(message, isError = false) {
   status.textContent = message;
@@ -224,6 +228,33 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+async function requestServerExport(format) {
+  const endpoint = REMOTE_EXPORT_ENDPOINTS[format];
+  if (!endpoint) {
+    throw new Error(`Unsupported export format: ${format}`);
+  }
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      html: previewRoot.innerHTML,
+      fileName: currentFileBase,
+      title: documentTitle.textContent || currentFileBase,
+      dimensions: currentDimensions
+    })
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Export failed with status ${response.status}`);
+  }
+
+  return response.blob();
+}
+
 async function exportPreviewAsPngBlob() {
   const { toPng } = await loadExportModules();
   const dataUrl = await toPng(previewRoot, {
@@ -268,17 +299,8 @@ async function exportPng() {
 async function exportPdf() {
   await withBusyState(async () => {
     setStatus('PDF を生成しています...');
-    const blob = await exportPreviewAsPngBlob();
-    const dataUrl = await blobToDataUrl(blob);
-    const { jsPDF } = await loadExportModules();
-    const pdf = new jsPDF({
-      orientation: currentDimensions.width >= currentDimensions.height ? 'landscape' : 'portrait',
-      unit: 'pt',
-      format: [currentDimensions.width, currentDimensions.height]
-    });
-
-    pdf.addImage(dataUrl, 'PNG', 0, 0, currentDimensions.width, currentDimensions.height);
-    pdf.save(`${currentFileBase}.pdf`);
+    const blob = await requestServerExport('pdf');
+    downloadBlob(blob, `${currentFileBase}.pdf`);
     setStatus('PDF を出力しました。');
   });
 }
@@ -286,26 +308,8 @@ async function exportPdf() {
 async function exportPptx() {
   await withBusyState(async () => {
     setStatus('PPTX を生成しています...');
-    const blob = await exportPreviewAsPngBlob();
-    const dataUrl = await blobToDataUrl(blob);
-    const { PptxGenJS } = await loadExportModules();
-    const pptx = new PptxGenJS();
-    const widthInches = currentDimensions.width / 96;
-    const heightInches = currentDimensions.height / 96;
-
-    pptx.defineLayout({
-      name: 'CUSTOM',
-      width: widthInches,
-      height: heightInches
-    });
-    pptx.layout = 'CUSTOM';
-    pptx.author = 'htmltopp';
-    pptx.subject = 'Generated from HTML';
-    pptx.title = documentTitle.textContent || currentFileBase;
-    const slide = pptx.addSlide();
-    slide.background = { color: 'F5F1E8' };
-    slide.addImage({ data: dataUrl, x: 0, y: 0, w: widthInches, h: heightInches });
-    await pptx.writeFile({ fileName: `${currentFileBase}.pptx` });
+    const blob = await requestServerExport('pptx');
+    downloadBlob(blob, `${currentFileBase}.pptx`);
     setStatus('PPTX を出力しました。');
   });
 }

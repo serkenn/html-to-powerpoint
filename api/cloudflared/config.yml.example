@@ -1,0 +1,7 @@
+tunnel: htmltopp-renderer
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: your-private-api.example.com
+    service: http://renderer:8788
+  - service: http_status:404

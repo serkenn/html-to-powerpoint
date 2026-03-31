@@ -1,0 +1,24 @@
+services:
+  renderer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8788
+      SHARED_TOKEN: ${SHARED_TOKEN}
+      ALLOWED_ASSET_HOSTS: ${ALLOWED_ASSET_HOSTS:-fonts.googleapis.com,fonts.gstatic.com}
+    expose:
+      - "8788"
+
+  cloudflared:
+    image: cloudflare/cloudflared:2025.3.0
+    restart: unless-stopped
+    depends_on:
+      - renderer
+    command: tunnel --config /etc/cloudflared/config.yml run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
