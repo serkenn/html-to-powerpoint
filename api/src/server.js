@@ -373,23 +373,45 @@ function collectInlineText(node, inheritedStyle, runs, fontMap) {
 
 function buildTextOptions(style, fontMap) {
   const fontFamilies = splitFontFamilies(style['font-family']);
-  const chosenFont = pickSupportedFont(fontFamilies, fontMap);
+  const fontWeight = Number.parseInt(style['font-weight'] || '400', 10) || 400;
+  const chosenFont = pickSupportedFont(fontFamilies, fontMap, fontWeight);
+  const fontSize = pxToPt(Number.parseFloat(style['font-size'] || '16'));
   const color = firstColor(style.color) || '000000';
 
   return {
     fontFace: chosenFont.pptxName,
-    fontSize: pxToPt(Number.parseFloat(style['font-size'] || '16')),
-    bold: Number.parseInt(style['font-weight'] || '400', 10) >= 600,
+    fontSize,
+    bold: fontWeight >= 600,
     italic: style['font-style'] === 'italic',
     color,
     breakLine: false,
-    charSpace: computeCharSpace(style['letter-spacing'])
+    charSpace: computeCharSpace(style['letter-spacing']),
+    fontWeight,
+    pdfFont: resolvePdfFont(chosenFont, fontWeight),
+    lineHeight: computeLineHeight(style['line-height'], fontSize)
   };
 }
 
 function computeCharSpace(letterSpacing) {
   const value = Number.parseFloat(letterSpacing || '0');
   return Number.isFinite(value) ? pxToPt(value) : 0;
+}
+
+function computeLineHeight(lineHeight, fontSize) {
+  if (!lineHeight) {
+    return fontSize * 1.2;
+  }
+
+  if (lineHeight.endsWith('px')) {
+    return pxToPt(Number.parseFloat(lineHeight));
+  }
+
+  const numeric = Number.parseFloat(lineHeight);
+  if (Number.isFinite(numeric)) {
+    return numeric * fontSize;
+  }
+
+  return fontSize * 1.2;
 }
 
 function splitFontFamilies(value = '') {
@@ -399,7 +421,7 @@ function splitFontFamilies(value = '') {
     .filter(Boolean);
 }
 
-function pickSupportedFont(fontFamilies, fontMap) {
+function pickSupportedFont(fontFamilies, fontMap, fontWeight = 400) {
   for (const family of fontFamilies) {
     if (fontMap.has(family)) {
       return fontMap.get(family);
@@ -408,33 +430,70 @@ function pickSupportedFont(fontFamilies, fontMap) {
 
   return {
     pptxName: fontFamilies[0] || 'Arial',
-    pdfName: 'Helvetica'
+    pdfName: 'Helvetica',
+    pdfWeights: {
+      400: 'Helvetica',
+      700: 'Helvetica-Bold'
+    }
   };
+}
+
+function resolvePdfFont(fontInfo, fontWeight) {
+  const weights = fontInfo.pdfWeights || {};
+  if (fontWeight >= 900 && weights[900]) {
+    return weights[900];
+  }
+  if (fontWeight >= 700 && weights[700]) {
+    return weights[700];
+  }
+  if (fontWeight >= 600 && weights[600]) {
+    return weights[600];
+  }
+  if (fontWeight >= 500 && weights[500]) {
+    return weights[500];
+  }
+  return weights[400] || fontInfo.pdfName || 'Helvetica';
 }
 
 async function collectFonts(root) {
   const map = new Map();
-  const montserratFontPath = resolveSystemFont([
-    '/usr/local/share/fonts/montserrat/Montserrat-Regular.ttf',
-    '/usr/share/fonts/truetype/montserrat/Montserrat-Regular.ttf',
-    '/usr/share/fonts/opentype/montserrat/Montserrat-Regular.otf'
-  ]);
-  const notoFontPath = resolveSystemFont([
-    '/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf',
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf'
-  ]);
-  map.set('Arial', { pptxName: 'Arial', pdfName: 'Helvetica' });
-  map.set('Helvetica', { pptxName: 'Arial', pdfName: 'Helvetica' });
+  const montserratFonts = {
+    400: resolveSystemFont(['/usr/local/share/fonts/montserrat/Montserrat-Regular.ttf']),
+    500: resolveSystemFont(['/usr/local/share/fonts/montserrat/Montserrat-Medium.ttf']),
+    600: resolveSystemFont(['/usr/local/share/fonts/montserrat/Montserrat-SemiBold.ttf']),
+    700: resolveSystemFont(['/usr/local/share/fonts/montserrat/Montserrat-Bold.ttf']),
+    900: resolveSystemFont(['/usr/local/share/fonts/montserrat/Montserrat-Black.ttf'])
+  };
+  const notoFonts = {
+    400: resolveSystemFont([
+      '/usr/local/share/fonts/notojp/NotoSansJP-Regular.ttf',
+      '/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf'
+    ]),
+    500: resolveSystemFont(['/usr/local/share/fonts/notojp/NotoSansJP-Medium.ttf']),
+    700: resolveSystemFont(['/usr/local/share/fonts/notojp/NotoSansJP-Bold.ttf']),
+    900: resolveSystemFont(['/usr/local/share/fonts/notojp/NotoSansJP-Black.ttf'])
+  };
+  map.set('Arial', {
+    pptxName: 'Arial',
+    pdfName: 'Helvetica',
+    pdfWeights: { 400: 'Helvetica', 700: 'Helvetica-Bold' }
+  });
+  map.set('Helvetica', {
+    pptxName: 'Arial',
+    pdfName: 'Helvetica',
+    pdfWeights: { 400: 'Helvetica', 700: 'Helvetica-Bold' }
+  });
   map.set('sans-serif', {
     pptxName: 'Arial',
-    pdfName: notoFontPath || 'Helvetica'
+    pdfName: notoFonts[400] || 'Helvetica',
+    pdfWeights: notoFonts
   });
-  if (notoFontPath) {
-    map.set('Noto Sans JP', { pptxName: 'Noto Sans JP', pdfName: notoFontPath });
-    map.set('Hiragino Sans', { pptxName: 'Hiragino Sans', pdfName: notoFontPath });
+  if (notoFonts[400]) {
+    map.set('Noto Sans JP', { pptxName: 'Noto Sans JP', pdfName: notoFonts[400], pdfWeights: notoFonts });
+    map.set('Hiragino Sans', { pptxName: 'Hiragino Sans', pdfName: notoFonts[400], pdfWeights: notoFonts });
   }
-  if (montserratFontPath) {
-    map.set('Montserrat', { pptxName: 'Montserrat', pdfName: montserratFontPath });
+  if (montserratFonts[400]) {
+    map.set('Montserrat', { pptxName: 'Montserrat', pdfName: montserratFonts[400], pdfWeights: montserratFonts });
   }
 
   const links = root.querySelectorAll('link');
@@ -454,11 +513,17 @@ async function collectFonts(root) {
       map.set(family, {
         pptxName: family,
         pdfName:
-          family === 'Montserrat' && montserratFontPath
-            ? montserratFontPath
-            : family === 'Noto Sans JP' && notoFontPath
-              ? notoFontPath
-              : 'Helvetica'
+          family === 'Montserrat' && montserratFonts[400]
+            ? montserratFonts[400]
+            : family === 'Noto Sans JP' && notoFonts[400]
+              ? notoFonts[400]
+              : 'Helvetica',
+        pdfWeights:
+          family === 'Montserrat' && montserratFonts[400]
+            ? montserratFonts
+            : family === 'Noto Sans JP' && notoFonts[400]
+              ? notoFonts
+              : { 400: 'Helvetica', 700: 'Helvetica-Bold' }
       });
     }
   }
@@ -471,11 +536,17 @@ async function collectFonts(root) {
         map.set(family, {
           pptxName: family,
           pdfName:
-            family === 'Montserrat' && montserratFontPath
-              ? montserratFontPath
-              : family === 'Noto Sans JP' && notoFontPath
-                ? notoFontPath
-                : 'Helvetica'
+            family === 'Montserrat' && montserratFonts[400]
+              ? montserratFonts[400]
+              : family === 'Noto Sans JP' && notoFonts[400]
+                ? notoFonts[400]
+                : 'Helvetica',
+          pdfWeights:
+            family === 'Montserrat' && montserratFonts[400]
+              ? montserratFonts
+              : family === 'Noto Sans JP' && notoFonts[400]
+                ? notoFonts
+                : { 400: 'Helvetica', 700: 'Helvetica-Bold' }
         });
       }
     }
@@ -546,10 +617,14 @@ async function drawPdfItem(doc, item, fontMap) {
 
   if (item.type === 'text') {
     const first = item.textRuns.find((run) => run.text.trim());
-    const font = pickSupportedFont(splitFontFamilies(first?.options?.fontFace || 'Arial'), fontMap);
+    const font = pickSupportedFont(
+      splitFontFamilies(first?.options?.fontFace || 'Arial'),
+      fontMap,
+      first?.options?.fontWeight || 400
+    );
     doc.save();
     doc.fillOpacity(item.opacity);
-    doc.font(font.pdfName);
+    doc.font(first?.options?.pdfFont || font.pdfName);
     doc.fontSize(first?.options?.fontSize || 12);
     doc.fillColor(`#${first?.options?.color || '000000'}`);
     doc.text(
@@ -559,7 +634,9 @@ async function drawPdfItem(doc, item, fontMap) {
       {
         width: frame.width,
         height: frame.height,
-        align: item.align
+        align: item.align,
+        lineGap: Math.max(0, (first?.options?.lineHeight || 14) - (first?.options?.fontSize || 12)),
+        characterSpacing: first?.options?.charSpace || 0
       }
     );
     doc.restore();
