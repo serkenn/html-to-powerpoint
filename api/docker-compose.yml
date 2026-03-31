@@ -13,7 +13,7 @@ services:
       - "8788"
 
   cloudflared:
-    image: cloudflare/cloudflared:2025.3.0
+    image: cloudflare/cloudflared:latest
     restart: unless-stopped
     depends_on:
       - renderer
