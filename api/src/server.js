@@ -267,6 +267,15 @@ function pxToPt(value) {
   return value * 0.75;
 }
 
+function framePxToPt(frame) {
+  return {
+    left: pxToPt(frame.left),
+    top: pxToPt(frame.top),
+    width: pxToPt(frame.width),
+    height: pxToPt(frame.height)
+  };
+}
+
 function parseOpacity(value) {
   if (!value) {
     return 1;
@@ -405,6 +414,10 @@ function pickSupportedFont(fontFamilies, fontMap) {
 
 async function collectFonts(root) {
   const map = new Map();
+  const montserratFontPath = resolveSystemFont([
+    '/usr/share/fonts/truetype/montserrat/Montserrat-Regular.ttf',
+    '/usr/share/fonts/opentype/montserrat/Montserrat-Regular.otf'
+  ]);
   const notoFontPath = resolveSystemFont([
     '/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf',
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf'
@@ -418,6 +431,9 @@ async function collectFonts(root) {
   if (notoFontPath) {
     map.set('Noto Sans JP', { pptxName: 'Noto Sans JP', pdfName: notoFontPath });
     map.set('Hiragino Sans', { pptxName: 'Hiragino Sans', pdfName: notoFontPath });
+  }
+  if (montserratFontPath) {
+    map.set('Montserrat', { pptxName: 'Montserrat', pdfName: montserratFontPath });
   }
 
   const links = root.querySelectorAll('link');
@@ -436,7 +452,12 @@ async function collectFonts(root) {
     for (const family of families) {
       map.set(family, {
         pptxName: family,
-        pdfName: family === 'Noto Sans JP' && notoFontPath ? notoFontPath : 'Helvetica'
+        pdfName:
+          family === 'Montserrat' && montserratFontPath
+            ? montserratFontPath
+            : family === 'Noto Sans JP' && notoFontPath
+              ? notoFontPath
+              : 'Helvetica'
       });
     }
   }
@@ -448,7 +469,12 @@ async function collectFonts(root) {
       if (!map.has(family)) {
         map.set(family, {
           pptxName: family,
-          pdfName: family === 'Noto Sans JP' && notoFontPath ? notoFontPath : 'Helvetica'
+          pdfName:
+            family === 'Montserrat' && montserratFontPath
+              ? montserratFontPath
+              : family === 'Noto Sans JP' && notoFontPath
+                ? notoFontPath
+                : 'Helvetica'
         });
       }
     }
@@ -458,9 +484,11 @@ async function collectFonts(root) {
 }
 
 async function renderPdf(slide, payload) {
+  const pageWidth = pxToPt(payload.dimensions.width);
+  const pageHeight = pxToPt(payload.dimensions.height);
   const doc = new PDFDocument({
     autoFirstPage: false,
-    size: [payload.dimensions.width, payload.dimensions.height],
+    size: [pageWidth, pageHeight],
     margin: 0
   });
   const chunks = [];
@@ -470,7 +498,7 @@ async function renderPdf(slide, payload) {
     throw error;
   });
 
-  doc.addPage({ size: [payload.dimensions.width, payload.dimensions.height], margin: 0 });
+  doc.addPage({ size: [pageWidth, pageHeight], margin: 0 });
 
   for (const item of slide.elements) {
     await drawPdfItem(doc, item, slide.fontMap);
@@ -482,10 +510,12 @@ async function renderPdf(slide, payload) {
 }
 
 async function drawPdfItem(doc, item, fontMap) {
+  const frame = framePxToPt(item.frame);
+
   if (item.type === 'rect') {
     doc.save();
     doc.fillColor(`#${item.fill}`).fillOpacity(item.opacity);
-    doc.roundedRect(item.frame.left, item.frame.top, item.frame.width, item.frame.height, item.radius).fill();
+    doc.roundedRect(frame.left, frame.top, frame.width, frame.height, item.radius).fill();
     doc.restore();
     return;
   }
@@ -493,9 +523,9 @@ async function drawPdfItem(doc, item, fontMap) {
   if (item.type === 'svg') {
     doc.save();
     doc.fillOpacity(item.opacity).strokeOpacity(item.opacity);
-    SVGtoPDF(doc, item.svgMarkup, item.frame.left, item.frame.top, {
-      width: item.frame.width,
-      height: item.frame.height,
+    SVGtoPDF(doc, item.svgMarkup, frame.left, frame.top, {
+      width: frame.width,
+      height: frame.height,
       assumePt: false
     });
     doc.restore();
@@ -505,9 +535,9 @@ async function drawPdfItem(doc, item, fontMap) {
   if (item.type === 'image') {
     doc.save();
     doc.opacity(item.opacity);
-    doc.image(item.buffer, item.frame.left, item.frame.top, {
-      width: item.frame.width,
-      height: item.frame.height
+    doc.image(item.buffer, frame.left, frame.top, {
+      width: frame.width,
+      height: frame.height
     });
     doc.restore();
     return;
@@ -523,11 +553,11 @@ async function drawPdfItem(doc, item, fontMap) {
     doc.fillColor(`#${first?.options?.color || '000000'}`);
     doc.text(
       normalizeTextRuns(item.textRuns),
-      item.frame.left,
-      item.frame.top,
+      frame.left,
+      frame.top,
       {
-        width: item.frame.width,
-        height: item.frame.height,
+        width: frame.width,
+        height: frame.height,
         align: item.align
       }
     );

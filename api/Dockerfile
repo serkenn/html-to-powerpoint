@@ -3,7 +3,7 @@ FROM node:22-bookworm-slim
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends fonts-ipafont-gothic fonts-noto-cjk \
+  && apt-get install -y --no-install-recommends fonts-ipafont-gothic fonts-noto-cjk fonts-montserrat \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
