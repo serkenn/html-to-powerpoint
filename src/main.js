@@ -59,14 +59,22 @@ app.innerHTML = `
           </div>
           <div class="preview-side-meta">
             <span id="slideSize"></span>
-            <span id="scaleLabel">fit</span>
+            <button id="scaleLabel" class="scale-reset-btn" title="クリックで表示をリセット">fit</button>
           </div>
         </div>
         <div class="preview-stage">
           <div id="previewCanvas" class="preview-canvas">
             <div id="slideViewport" class="viewport empty">
               <div id="previewRoot" class="preview-root"></div>
-              <p class="placeholder">左のリストからページを選択してください</p>
+              <div class="placeholder">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+                  <rect x="7" y="5" width="22" height="28" rx="3" stroke="currentColor" stroke-width="1.5"/>
+                  <rect x="13" y="2" width="14" height="6" rx="2" stroke="currentColor" stroke-width="1.5"/>
+                  <path d="M13 18h14M13 23h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                <p>ページを選択するとプレビューが表示されます</p>
+                <p class="placeholder-sub">左のリストから選択、またはHTMLをドロップしてください</p>
+              </div>
             </div>
           </div>
         </div>
@@ -95,6 +103,11 @@ const scaleLabel = document.querySelector('#scaleLabel');
 let slides = [];
 let activeSlideId = null;
 let exportModulesPromise;
+let dragSourceId = null;
+
+// Pan & zoom state
+let pz = { scale: 1, panX: 0, panY: 0 };
+let fitScale = 1;
 
 const SAMPLE_PATH = '/samples/deck.html';
 const REMOTE_EXPORT_ENDPOINTS = {
@@ -243,21 +256,35 @@ function createSlideFromHtml(html, sourceName) {
   };
 }
 
+function applyPanZoom() {
+  const total = fitScale * pz.scale;
+  slideViewport.style.transform =
+    `translate(calc(-50% + ${pz.panX}px), calc(-50% + ${pz.panY}px)) scale(${total})`;
+  scaleLabel.textContent = `${Math.round(total * 100)}%`;
+}
+
+function resetPanZoom() {
+  pz = { scale: 1, panX: 0, panY: 0 };
+  applyPanZoom();
+}
+
 function fitPreview(dimensions) {
   const stage = previewCanvas.parentElement;
-  const { clientWidth, clientHeight } = stage;
-  const scale = Math.min(clientWidth / dimensions.width, clientHeight / dimensions.height, 1);
-  const scaledWidth = dimensions.width * scale;
-  const scaledHeight = dimensions.height * scale;
+  const padding = 40;
+  const availW = stage.clientWidth - padding * 2;
+  const availH = stage.clientHeight - padding * 2;
+  fitScale = Math.min(availW / dimensions.width, availH / dimensions.height, 1);
 
+  const scaledWidth = dimensions.width * fitScale;
+  const scaledHeight = dimensions.height * fitScale;
   previewCanvas.style.width = `${scaledWidth}px`;
   previewCanvas.style.height = `${scaledHeight}px`;
+
   slideViewport.style.width = `${dimensions.width}px`;
   slideViewport.style.height = `${dimensions.height}px`;
   slideViewport.style.left = '50%';
   slideViewport.style.top = '50%';
-  slideViewport.style.transform = `scale(${scale})`;
-  scaleLabel.textContent = `${Math.round(scale * 100)}%`;
+  applyPanZoom();
 }
 
 function renderActiveSlide() {
@@ -284,6 +311,7 @@ function renderActiveSlide() {
   documentTitle.textContent = activeSlide.title;
   previewRoot.innerHTML = activeSlide.previewMarkup;
   slideViewport.classList.remove('empty');
+  pz = { scale: 1, panX: 0, panY: 0 };
   fitPreview(activeSlide.dimensions);
   setExportEnabled(true);
 }
@@ -308,7 +336,7 @@ function buildPageCard(slide, index) {
   const isActive = slide.id === activeSlideId;
 
   return `
-    <article class="page-card ${isActive ? 'active' : ''}" data-slide-id="${slide.id}">
+    <article class="page-card ${isActive ? 'active' : ''}" data-slide-id="${slide.id}" draggable="true">
       <button class="page-card-main" type="button" data-action="select" data-slide-id="${slide.id}">
         <span class="page-index">${index + 1}</span>
         <span class="page-thumb-stage">
@@ -543,6 +571,69 @@ fileInput.addEventListener('change', async (event) => {
   event.target.value = '';
 });
 
+// ── Drag & drop reorder ──────────────────────────────────────────────────────
+
+function clearDragIndicators() {
+  pageList.querySelectorAll('.drag-before, .drag-after').forEach((el) => {
+    el.classList.remove('drag-before', 'drag-after');
+  });
+}
+
+pageList.addEventListener('dragstart', (event) => {
+  const card = event.target.closest('.page-card');
+  if (!card) return;
+  dragSourceId = card.dataset.slideId;
+  card.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', dragSourceId);
+});
+
+pageList.addEventListener('dragend', () => {
+  pageList.querySelectorAll('.dragging').forEach((el) => el.classList.remove('dragging'));
+  clearDragIndicators();
+  dragSourceId = null;
+});
+
+pageList.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  const card = event.target.closest('.page-card');
+  if (!card || card.dataset.slideId === dragSourceId) return;
+  clearDragIndicators();
+  const { top, height } = card.getBoundingClientRect();
+  card.classList.add(event.clientY < top + height / 2 ? 'drag-before' : 'drag-after');
+});
+
+pageList.addEventListener('dragleave', (event) => {
+  const card = event.target.closest('.page-card');
+  if (card && !card.contains(event.relatedTarget)) {
+    card.classList.remove('drag-before', 'drag-after');
+  }
+});
+
+pageList.addEventListener('drop', (event) => {
+  event.preventDefault();
+  clearDragIndicators();
+  const targetCard = event.target.closest('.page-card');
+  if (!targetCard || !dragSourceId) return;
+  const targetId = targetCard.dataset.slideId;
+  if (targetId === dragSourceId) return;
+
+  const { top, height } = targetCard.getBoundingClientRect();
+  const insertBefore = event.clientY < top + height / 2;
+
+  const next = [...slides];
+  const srcIdx = next.findIndex((s) => s.id === dragSourceId);
+  const [item] = next.splice(srcIdx, 1);
+  const dstIdx = next.findIndex((s) => s.id === targetId);
+  next.splice(insertBefore ? dstIdx : dstIdx + 1, 0, item);
+  slides = next;
+  refreshUI();
+  setStatus('ページを並び替えました。');
+});
+
+// ── Page list click ───────────────────────────────────────────────────────────
+
 pageList.addEventListener('click', (event) => {
   const target = event.target.closest('[data-action]');
   if (!target) {
@@ -579,5 +670,72 @@ window.addEventListener('resize', () => {
     fitPreview(activeSlide.dimensions);
   }
 });
+
+// ── Pan & zoom ────────────────────────────────────────────────────────────────
+
+const previewStage = document.querySelector('.preview-stage');
+let isPanning = false;
+let panPointerStart = { x: 0, y: 0 };
+let panPzStart = { x: 0, y: 0 };
+
+const ZOOM_STEP = 0.1;
+const ZOOM_MIN = 0.1;
+const ZOOM_MAX = 8;
+
+// Wheel to zoom (Ctrl+wheel or plain wheel)
+previewStage.addEventListener('wheel', (event) => {
+  if (!getActiveSlide()) return;
+  event.preventDefault();
+  const factor = event.deltaY < 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
+  pz.scale = Math.min(Math.max(pz.scale * factor, ZOOM_MIN / fitScale), ZOOM_MAX / fitScale);
+  applyPanZoom();
+}, { passive: false });
+
+// Mouse drag to pan
+previewStage.addEventListener('mousedown', (event) => {
+  if (event.button !== 0 || !getActiveSlide()) return;
+  isPanning = true;
+  panPointerStart = { x: event.clientX, y: event.clientY };
+  panPzStart = { x: pz.panX, y: pz.panY };
+  previewStage.classList.add('panning');
+  event.preventDefault();
+});
+
+window.addEventListener('mousemove', (event) => {
+  if (!isPanning) return;
+  pz.panX = panPzStart.x + event.clientX - panPointerStart.x;
+  pz.panY = panPzStart.y + event.clientY - panPointerStart.y;
+  applyPanZoom();
+});
+
+window.addEventListener('mouseup', () => {
+  if (!isPanning) return;
+  isPanning = false;
+  previewStage.classList.remove('panning');
+});
+
+// Touch drag to pan
+previewStage.addEventListener('touchstart', (event) => {
+  if (event.touches.length !== 1 || !getActiveSlide()) return;
+  const t = event.touches[0];
+  isPanning = true;
+  panPointerStart = { x: t.clientX, y: t.clientY };
+  panPzStart = { x: pz.panX, y: pz.panY };
+}, { passive: true });
+
+previewStage.addEventListener('touchmove', (event) => {
+  if (!isPanning || event.touches.length !== 1) return;
+  event.preventDefault();
+  const t = event.touches[0];
+  pz.panX = panPzStart.x + t.clientX - panPointerStart.x;
+  pz.panY = panPzStart.y + t.clientY - panPointerStart.y;
+  applyPanZoom();
+}, { passive: false });
+
+previewStage.addEventListener('touchend', () => { isPanning = false; });
+
+// Double-click or click scale button to reset
+previewStage.addEventListener('dblclick', () => { resetPanZoom(); });
+scaleLabel.addEventListener('click', () => { resetPanZoom(); });
 
 refreshUI();

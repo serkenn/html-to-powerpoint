@@ -261,6 +261,35 @@ button { appearance: none; cursor: pointer; }
   background: #faf9f8;
 }
 
+/* === Drag & drop states === */
+.page-card[draggable='true'] { cursor: grab; }
+.page-card[draggable='true']:active { cursor: grabbing; }
+.page-card button { cursor: pointer; }
+
+.page-card.dragging {
+  opacity: 0.35;
+  scale: 0.97;
+}
+
+.page-card.drag-before,
+.page-card.drag-after { position: relative; }
+
+.page-card.drag-before::before,
+.page-card.drag-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--primary);
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.page-card.drag-before::before { top: -3px; }
+.page-card.drag-after::after  { bottom: -3px; }
+
 /* === Page card === */
 .page-card {
   display: grid;
@@ -436,6 +465,19 @@ button { appearance: none; cursor: pointer; }
   flex-shrink: 0;
 }
 
+.scale-reset-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color 120ms;
+}
+
+.scale-reset-btn:hover { color: var(--primary); }
+
 /* Checkerboard stage */
 .preview-stage {
   flex: 1;
@@ -443,7 +485,12 @@ button { appearance: none; cursor: pointer; }
   display: grid;
   place-items: center;
   padding: 20px;
-  overflow: auto;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+}
+
+.preview-stage.panning { cursor: grabbing; }
   background-color: #e8e6e4;
   background-image:
     linear-gradient(45deg, #dedddb 25%, transparent 25%),
@@ -467,7 +514,7 @@ button { appearance: none; cursor: pointer; }
   overflow: hidden;
   background: #fff;
   transform-origin: center center;
-  translate: -50% -50%;
+  /* translate は JS の transform で管理するため CSS では指定しない */
   box-shadow: 0 8px 32px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.08);
 }
 
@@ -491,11 +538,30 @@ button { appearance: none; cursor: pointer; }
 .embedded-document > * { max-width: 100%; }
 
 .placeholder {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.88rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: #b0aeac;
+  pointer-events: none;
+  user-select: none;
 }
 
+.placeholder svg { opacity: 0.5; }
+
+.placeholder p {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.placeholder-sub {
+  font-size: 0.78rem !important;
+  color: #b0aeac !important;
+}
+
+.viewport.empty .preview-root { display: none; }
 .viewport:not(.empty) .placeholder { display: none; }
 
 /* === Responsive === */
