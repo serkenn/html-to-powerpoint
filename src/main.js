@@ -20,7 +20,7 @@ app.innerHTML = `
           </svg>
           PDF
         </button>
-        <button id="exportPptxButton" class="export-btn" disabled title="PPTX として書き出し">
+        <button id="exportPptxButton" class="export-btn" disabled title="すべてのスライドをPPTXとして書き出し">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" focusable="false">
             <path d="M6.5 1.5v7M4 6l2.5 2.5L9 6M1.5 10.5h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -111,8 +111,8 @@ let fitScale = 1;
 
 const SAMPLE_PATH = '/samples/deck.html';
 const REMOTE_EXPORT_ENDPOINTS = {
-  pdf: '/api/render/pdf',
-  pptx: '/api/render/pptx'
+  pdf: 'http://localhost:8788/api/render/pdf',
+  pptx: 'http://localhost:8788/api/render/pptx'
 };
 
 function setStatus(message, isError = false) {
@@ -446,23 +446,43 @@ function downloadBlob(blob, filename) {
 }
 
 async function requestServerExport(format) {
-  const activeSlide = getActiveSlide();
   const endpoint = REMOTE_EXPORT_ENDPOINTS[format];
-  if (!activeSlide || !endpoint) {
+  if (!endpoint) {
     throw new Error(`Unsupported export format: ${format}`);
+  }
+
+  let body;
+  if (format === 'pptx') {
+    // PPTXの場合はすべてのスライドを送る
+    body = JSON.stringify({
+      slides: slides.map(slide => ({
+        html: slide.previewMarkup,
+        fileName: slide.fileBase,
+        title: slide.title,
+        dimensions: slide.dimensions
+      }))
+    });
+  } else {
+    // PDF/PNGはアクティブスライドのみ
+    const activeSlide = getActiveSlide();
+    if (!activeSlide) {
+      throw new Error('No active slide');
+    }
+    body = JSON.stringify({
+      html: activeSlide.previewMarkup,
+      fileName: activeSlide.fileBase,
+      title: activeSlide.title,
+      dimensions: activeSlide.dimensions
+    });
   }
 
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
-      'content-type': 'application/json'
+      'content-type': 'application/json',
+      'x-shared-token': 'local-dev'
     },
-    body: JSON.stringify({
-      html: activeSlide.previewMarkup,
-      fileName: activeSlide.fileBase,
-      title: activeSlide.title,
-      dimensions: activeSlide.dimensions
-    })
+    body
   });
 
   if (!response.ok) {
@@ -539,15 +559,14 @@ async function exportPdf() {
 }
 
 async function exportPptx() {
-  const activeSlide = getActiveSlide();
-  if (!activeSlide) {
+  if (slides.length === 0) {
     return;
   }
 
   await withBusyState(async () => {
     setStatus('PPTX を生成しています...');
     const blob = await requestServerExport('pptx');
-    downloadBlob(blob, `${activeSlide.fileBase}.pptx`);
+    downloadBlob(blob, `presentation.pptx`);
     setStatus('PPTX を出力しました。');
   }, exportPptxButton);
 }
