@@ -275,10 +275,9 @@ function fitPreview(dimensions) {
   const availH = stage.clientHeight - padding * 2;
   fitScale = Math.min(availW / dimensions.width, availH / dimensions.height, 1);
 
-  const scaledWidth = dimensions.width * fitScale;
-  const scaledHeight = dimensions.height * fitScale;
-  previewCanvas.style.width = `${scaledWidth}px`;
-  previewCanvas.style.height = `${scaledHeight}px`;
+  // ステージ全体に広げることで left/top 50% が必ずステージ中央を指す
+  previewCanvas.style.width = `${stage.clientWidth}px`;
+  previewCanvas.style.height = `${stage.clientHeight}px`;
 
   slideViewport.style.width = `${dimensions.width}px`;
   slideViewport.style.height = `${dimensions.height}px`;
@@ -300,6 +299,8 @@ function renderActiveSlide() {
     slideViewport.classList.add('empty');
     slideViewport.style.width = '';
     slideViewport.style.height = '';
+    slideViewport.style.left = '';
+    slideViewport.style.top = '';
     slideViewport.style.transform = '';
     scaleLabel.textContent = 'fit';
     setExportEnabled(false);
