@@ -626,21 +626,21 @@ async function drawPdfItem(doc, item, fontMap) {
       fontMap,
       first?.options?.fontWeight || 400
     );
+    const fontSize = first?.options?.fontSize || 12;
+    const lineHeight = first?.options?.lineHeight || fontSize * 1.2;
     doc.save();
     doc.fillOpacity(item.opacity);
     doc.font(first?.options?.pdfFont || font.pdfName);
-    doc.fontSize(first?.options?.fontSize || 12);
+    doc.fontSize(fontSize);
     doc.fillColor(`#${first?.options?.color || '000000'}`);
-    const measureOptions = {
-      characterSpacing: first?.options?.charSpace || 0
-    };
-    const lineHeight = first?.options?.lineHeight || 14;
-    const wrappedLines = wrapTextForPdf(doc, normalizeTextRuns(item.textRuns), frame.width, measureOptions)
-      .split('\n');
-    drawPdfLines(doc, wrappedLines, frame, {
+    // 1回の doc.text() 呼び出しにまとめることで Illustrator でも単一テキスト要素になる
+    doc.text(normalizeTextRuns(item.textRuns), frame.left, frame.top, {
+      lineBreak: true,
+      width: frame.width,
+      height: frame.height,
       align: item.align,
-      lineHeight,
-      measureOptions
+      characterSpacing: first?.options?.charSpace || 0,
+      lineGap: Math.max(0, lineHeight - fontSize)
     });
     doc.restore();
   }
@@ -654,58 +654,6 @@ function normalizeTextRuns(runs) {
     .trimEnd();
 }
 
-function wrapTextForPdf(doc, text, maxWidth, measureOptions) {
-  const paragraphs = text.split('\n');
-  const wrapped = paragraphs.map((paragraph) => wrapParagraphForPdf(doc, paragraph, maxWidth, measureOptions));
-  return wrapped.join('\n');
-}
-
-function wrapParagraphForPdf(doc, text, maxWidth, measureOptions) {
-  if (!text) {
-    return '';
-  }
-
-  let line = '';
-  let result = '';
-
-  for (const char of Array.from(text)) {
-    const candidate = line + char;
-    if (line && doc.widthOfString(candidate, measureOptions) > maxWidth) {
-      result += `${line}\n`;
-      line = char;
-    } else {
-      line = candidate;
-    }
-  }
-
-  return result + line;
-}
-
-function drawPdfLines(doc, lines, frame, options) {
-  const { align, lineHeight, measureOptions } = options;
-  let currentY = frame.top;
-
-  for (const line of lines) {
-    if (currentY + lineHeight > frame.top + frame.height) {
-      break;
-    }
-
-    const lineWidth = doc.widthOfString(line, measureOptions);
-    let currentX = frame.left;
-
-    if (align === 'center') {
-      currentX = frame.left + Math.max(0, (frame.width - lineWidth) / 2);
-    } else if (align === 'right') {
-      currentX = frame.left + Math.max(0, frame.width - lineWidth);
-    }
-
-    doc.text(line, currentX, currentY, {
-      lineBreak: false,
-      characterSpacing: measureOptions.characterSpacing || 0
-    });
-    currentY += lineHeight;
-  }
-}
 
 function resolveSystemFont(candidates) {
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
