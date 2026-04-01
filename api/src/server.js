@@ -628,23 +628,48 @@ async function drawPdfItem(doc, item, fontMap) {
     );
     const fontSize = first?.options?.fontSize || 12;
     const lineHeight = first?.options?.lineHeight || fontSize * 1.2;
+    const charSpace = first?.options?.charSpace || 0;
     doc.save();
     doc.fillOpacity(item.opacity);
     doc.font(first?.options?.pdfFont || font.pdfName);
     doc.fontSize(fontSize);
     doc.fillColor(`#${first?.options?.color || '000000'}`);
-    // フォントの実際の行高を取得してから lineGap を算出する
-    // (fontSize だけで引くと PDFKit の内部行高とズレてテキストが欠ける)
-    const pdfLineHeight = doc.currentLineHeight(false);
-    const lineGap = Math.max(0, lineHeight - pdfLineHeight);
-    // 1回の doc.text() 呼び出しにまとめることで Illustrator でも単一テキスト要素になる
-    doc.text(normalizeTextRuns(item.textRuns), frame.left, frame.top, {
-      lineBreak: true,
-      width: frame.width,
-      align: item.align,
-      characterSpacing: first?.options?.charSpace || 0,
-      lineGap
+
+    const measureOptions = { characterSpacing: charSpace };
+    const text = normalizeTextRuns(item.textRuns);
+    const allLines = wrapTextForPdf(doc, text, frame.width, measureOptions).split('\n');
+
+    // 高さに収まる行だけ抽出
+    const visibleLines = [];
+    let y = frame.top;
+    for (const line of allLines) {
+      if (y + lineHeight > frame.top + frame.height) break;
+      visibleLines.push({ line, y });
+      y += lineHeight;
+    }
+
+    // continued: true で全行を同一 BT/ET ブロックに収める
+    // → Illustrator でも単一テキスト要素として扱われる
+    visibleLines.forEach(({ line, y: lineY }, index) => {
+      const isLast = index === visibleLines.length - 1;
+      const lineWidth = doc.widthOfString(line, measureOptions);
+      let x = frame.left;
+      if (item.align === 'center') {
+        x = frame.left + Math.max(0, (frame.width - lineWidth) / 2);
+      } else if (item.align === 'right') {
+        x = frame.left + Math.max(0, frame.width - lineWidth);
+      }
+      doc.text(line, x, lineY, {
+        lineBreak: false,
+        continued: !isLast,
+        characterSpacing: charSpace
+      });
     });
+
+    if (visibleLines.length === 0) {
+      doc.text('', frame.left, frame.top, { lineBreak: false });
+    }
+
     doc.restore();
   }
 }
@@ -655,6 +680,29 @@ function normalizeTextRuns(runs) {
     .join('')
     .replace(/\s+\n/g, '\n')
     .trimEnd();
+}
+
+function wrapTextForPdf(doc, text, maxWidth, measureOptions) {
+  return text
+    .split('\n')
+    .map((paragraph) => wrapParagraphForPdf(doc, paragraph, maxWidth, measureOptions))
+    .join('\n');
+}
+
+function wrapParagraphForPdf(doc, text, maxWidth, measureOptions) {
+  if (!text) return '';
+  let line = '';
+  let result = '';
+  for (const char of Array.from(text)) {
+    const candidate = line + char;
+    if (line && doc.widthOfString(candidate, measureOptions) > maxWidth) {
+      result += `${line}\n`;
+      line = char;
+    } else {
+      line = candidate;
+    }
+  }
+  return result + line;
 }
 
 
