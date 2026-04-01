@@ -633,14 +633,17 @@ async function drawPdfItem(doc, item, fontMap) {
     doc.font(first?.options?.pdfFont || font.pdfName);
     doc.fontSize(fontSize);
     doc.fillColor(`#${first?.options?.color || '000000'}`);
+    // フォントの実際の行高を取得してから lineGap を算出する
+    // (fontSize だけで引くと PDFKit の内部行高とズレてテキストが欠ける)
+    const pdfLineHeight = doc.currentLineHeight(false);
+    const lineGap = Math.max(0, lineHeight - pdfLineHeight);
     // 1回の doc.text() 呼び出しにまとめることで Illustrator でも単一テキスト要素になる
     doc.text(normalizeTextRuns(item.textRuns), frame.left, frame.top, {
       lineBreak: true,
       width: frame.width,
-      height: frame.height,
       align: item.align,
       characterSpacing: first?.options?.charSpace || 0,
-      lineGap: Math.max(0, lineHeight - fontSize)
+      lineGap
     });
     doc.restore();
   }
