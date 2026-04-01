@@ -8,6 +8,7 @@
     "start": "node src/server.js"
   },
   "dependencies": {
+    "cors": "^2.8.6",
     "express": "^4.21.2",
     "image-size": "^2.0.2",
     "node-html-parser": "^7.1.0",

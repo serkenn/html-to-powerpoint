@@ -5,11 +5,12 @@ import SVGtoPDF from 'svg-to-pdfkit';
 import PptxGenJS from 'pptxgenjs';
 import { parse } from 'node-html-parser';
 import { imageSize } from 'image-size';
+import cors from 'cors';
 
 const app = express();
 const host = process.env.HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.PORT || '8788', 10);
-const sharedToken = process.env.SHARED_TOKEN;
+const sharedToken = process.env.SHARED_TOKEN || 'local-dev';
 const allowedAssetHosts = new Set(
   (process.env.ALLOWED_ASSET_HOSTS || 'fonts.googleapis.com,fonts.gstatic.com')
     .split(',')
@@ -17,17 +18,27 @@ const allowedAssetHosts = new Set(
     .filter(Boolean)
 );
 
-if (!sharedToken) {
-  throw new Error('SHARED_TOKEN is required.');
-}
 
 app.use(express.json({ limit: '10mb' }));
+
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-shared-token']
+}));
+
+app.options('*', cors());
 
 app.get('/health', (_request, response) => {
   response.json({ ok: true });
 });
 
+// Auth middleware
 app.use((request, response, next) => {
+  if (request.method === 'OPTIONS') {
+    return next();
+  }
+
   if (request.headers['x-shared-token'] !== sharedToken) {
     response.status(401).json({ error: 'Unauthorized' });
     return;
@@ -36,8 +47,8 @@ app.use((request, response, next) => {
   next();
 });
 
-app.post('/render/pdf', asyncHandler(async (request, response) => {
-  const payload = normalizePayload(request.body);
+app.post('/api/render/pdf', asyncHandler(async (request, response) => {
+  const payload = normalizePayload(request.body, 'pdf');
   const slide = await buildSlideModel(payload);
   const buffer = await renderPdf(slide, payload);
 
@@ -48,10 +59,9 @@ app.post('/render/pdf', asyncHandler(async (request, response) => {
     .send(buffer);
 }));
 
-app.post('/render/pptx', asyncHandler(async (request, response) => {
-  const payload = normalizePayload(request.body);
-  const slide = await buildSlideModel(payload);
-  const buffer = await renderPptx(slide, payload);
+app.post('/api/render/pptx', asyncHandler(async (request, response) => {
+  const payload = normalizePayload(request.body, 'pptx');
+  const buffer = await renderPptx(payload.slides);
 
   response
     .status(200)
@@ -59,7 +69,7 @@ app.post('/render/pptx', asyncHandler(async (request, response) => {
       'content-type',
       'application/vnd.openxmlformats-officedocument.presentationml.presentation'
     )
-    .setHeader('content-disposition', buildDisposition(payload.fileName, 'pptx'))
+    .setHeader('content-disposition', buildDisposition('presentation', 'pptx'))
     .send(Buffer.from(buffer));
 }));
 
@@ -80,22 +90,49 @@ function asyncHandler(handler) {
   };
 }
 
-function normalizePayload(body) {
-  if (!body || typeof body.html !== 'string' || !body.html.trim()) {
-    const err = new Error('html is required');
-    err.status = 400;
-    throw err;
+function normalizePayload(body, format) {
+  if (format === 'pptx') {
+    // PPTXの場合はslides配列を受け取る
+    if (!body || !Array.isArray(body.slides) || body.slides.length === 0) {
+      const err = new Error('slides array is required for PPTX');
+      err.status = 400;
+      throw err;
+    }
+    return {
+      slides: body.slides.map(slide => {
+        if (!slide.html || typeof slide.html !== 'string' || !slide.html.trim()) {
+          const err = new Error('each slide must have html');
+          err.status = 400;
+          throw err;
+        }
+        const width = sanitizeDimension(slide.dimensions?.width, 1280);
+        const height = sanitizeDimension(slide.dimensions?.height, 720);
+        return {
+          html: slide.html,
+          fileName: sanitizeBasename(slide.fileName || 'slide'),
+          title: String(slide.title || 'Generated Slide'),
+          dimensions: { width, height }
+        };
+      })
+    };
+  } else {
+    // PDF/PNGは従来通り
+    if (!body || typeof body.html !== 'string' || !body.html.trim()) {
+      const err = new Error('html is required');
+      err.status = 400;
+      throw err;
+    }
+
+    const width = sanitizeDimension(body.dimensions?.width, 1280);
+    const height = sanitizeDimension(body.dimensions?.height, 720);
+
+    return {
+      html: body.html,
+      fileName: sanitizeBasename(body.fileName || 'slide'),
+      title: String(body.title || 'Generated Slide'),
+      dimensions: { width, height }
+    };
   }
-
-  const width = sanitizeDimension(body.dimensions?.width, 1280);
-  const height = sanitizeDimension(body.dimensions?.height, 720);
-
-  return {
-    html: body.html,
-    fileName: sanitizeBasename(body.fileName || 'slide'),
-    title: String(body.title || 'Generated Slide'),
-    dimensions: { width, height }
-  };
 }
 
 function sanitizeDimension(value, fallback) {
@@ -710,21 +747,35 @@ function resolveSystemFont(candidates) {
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
-async function renderPptx(slide, payload) {
+// 複数スライドをpptxで出力してんぞ
+async function renderPptx(slides) {
   const pptx = new PptxGenJS();
-  const widthInches = payload.dimensions.width / 96;
-  const heightInches = payload.dimensions.height / 96;
+  // 最初のスライドのdimensionsでレイアウトを定義
+  const firstSlide = slides[0];
+  const widthInches = firstSlide.dimensions.width / 96;
+  const heightInches = firstSlide.dimensions.height / 96;
 
   pptx.defineLayout({ name: 'CUSTOM', width: widthInches, height: heightInches });
   pptx.layout = 'CUSTOM';
   pptx.author = 'htmltopp-api';
-  pptx.title = payload.title;
+  pptx.title = 'Presentation';
   pptx.subject = 'Generated from HTML';
 
-  const pptSlide = pptx.addSlide();
+  for (const slidePayload of slides) {
+    const slideModel = await buildSlideModel(slidePayload);
+    const pptSlide = pptx.addSlide();
+    pptSlide.addText(slidePayload.title, {
+      x: 0.5,
+      y: 0.2,
+      w: widthInches - 1,
+      h: 0.5,
+      fontSize: 24,
+      bold: true
+    });
 
-  for (const item of slide.elements) {
-    await drawPptxItem(pptSlide, item);
+    for (const item of slideModel.elements) {
+      await drawPptxItem(pptSlide, item);
+    }
   }
 
   return pptx.write({ outputType: 'nodebuffer' });
