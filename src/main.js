@@ -4,34 +4,47 @@ import DOMPurify from 'dompurify';
 const app = document.querySelector('#app');
 
 app.innerHTML = `
-  <main class="shell">
-    <section class="hero">
-      <div>
-        <h1>HTML から PowerPoint / PDF を生成</h1>
-        <p class="lede">
-          複数の HTML を読み込み、ページ一覧から切り替えながら変換できます。
-        </p>
+  <div class="shell">
+    <header class="topbar">
+      <span class="topbar-brand">htmltopp</span>
+      <div class="topbar-actions">
+        <button id="exportPngButton" class="export-btn" disabled title="PNG として書き出し">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" focusable="false">
+            <path d="M6.5 1.5v7M4 6l2.5 2.5L9 6M1.5 10.5h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          PNG
+        </button>
+        <button id="exportPdfButton" class="export-btn" disabled title="PDF として書き出し">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" focusable="false">
+            <path d="M6.5 1.5v7M4 6l2.5 2.5L9 6M1.5 10.5h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          PDF
+        </button>
+        <button id="exportPptxButton" class="export-btn" disabled title="PPTX として書き出し">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" focusable="false">
+            <path d="M6.5 1.5v7M4 6l2.5 2.5L9 6M1.5 10.5h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          PPTX
+        </button>
       </div>
-    </section>
+    </header>
 
-    <section class="workspace">
+    <div class="workspace">
       <aside class="panel sidebar">
         <label class="dropzone" id="dropzone">
           <input id="fileInput" type="file" accept=".html,text/html" multiple hidden />
-          <span class="dropzone-title">HTML ファイルを追加</span>
-          <span class="dropzone-copy">複数選択とドラッグ&ドロップに対応</span>
+          <svg class="dropzone-icon" width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">
+            <path d="M15 20V10M12 13l3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M8 22h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span class="dropzone-title">HTML をドロップ</span>
+          <span class="dropzone-hint">または クリックして選択</span>
         </label>
+        <button id="loadSampleButton" class="sample-btn">サンプルを読み込む</button>
 
-        <div class="actions">
-          <button id="loadSampleButton" class="ghost">サンプルを追加</button>
-          <button id="exportPngButton" disabled>PNG</button>
-          <button id="exportPdfButton" disabled>PDF</button>
-          <button id="exportPptxButton" disabled>PPTX</button>
-        </div>
-
-        <div class="sidebar-header">
-          <strong>Pages</strong>
-          <span id="pageCount">0</span>
+        <div class="pages-header">
+          <span>Pages</span>
+          <span id="pageCount" class="pages-badge">0</span>
         </div>
 
         <div id="pageList" class="page-list"></div>
@@ -41,11 +54,11 @@ app.innerHTML = `
       <section class="panel preview-panel">
         <div class="preview-toolbar">
           <div class="preview-meta">
-            <strong id="documentTitle">-</strong>
+            <strong id="documentTitle">—</strong>
             <span id="fileName">未選択</span>
           </div>
           <div class="preview-side-meta">
-            <span id="slideSize">-</span>
+            <span id="slideSize"></span>
             <span id="scaleLabel">fit</span>
           </div>
         </div>
@@ -53,13 +66,13 @@ app.innerHTML = `
           <div id="previewCanvas" class="preview-canvas">
             <div id="slideViewport" class="viewport empty">
               <div id="previewRoot" class="preview-root"></div>
-              <p class="placeholder">左からページを選択するとここに表示されます。</p>
+              <p class="placeholder">左のリストからページを選択してください</p>
             </div>
           </div>
         </div>
       </section>
-    </section>
-  </main>
+    </div>
+  </div>
 `;
 
 const fileInput = document.querySelector('#fileInput');
@@ -314,7 +327,9 @@ function buildPageCard(slide, index) {
         </span>
       </button>
       <button class="page-delete" type="button" data-action="delete" data-slide-id="${slide.id}" aria-label="ページを削除">
-        削除
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden="true">
+          <path d="M1.5 1.5l8 8M9.5 1.5l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
       </button>
     </article>
   `;
@@ -449,11 +464,10 @@ async function exportPreviewAsPngBlob() {
   return response.blob();
 }
 
-async function withBusyState(task) {
+async function withBusyState(task, activeButton = null) {
   const buttons = [loadSampleButton, exportPngButton, exportPdfButton, exportPptxButton];
-  buttons.forEach((button) => {
-    button.disabled = true;
-  });
+  buttons.forEach((button) => { button.disabled = true; });
+  if (activeButton) activeButton.dataset.loading = '';
 
   try {
     await task();
@@ -463,6 +477,7 @@ async function withBusyState(task) {
   } finally {
     setExportEnabled(Boolean(getActiveSlide()));
     loadSampleButton.disabled = false;
+    if (activeButton) delete activeButton.dataset.loading;
   }
 }
 
@@ -477,7 +492,7 @@ async function exportPng() {
     const blob = await exportPreviewAsPngBlob();
     downloadBlob(blob, `${activeSlide.fileBase}.png`);
     setStatus('PNG を出力しました。');
-  });
+  }, exportPngButton);
 }
 
 async function exportPdf() {
@@ -491,7 +506,7 @@ async function exportPdf() {
     const blob = await requestServerExport('pdf');
     downloadBlob(blob, `${activeSlide.fileBase}.pdf`);
     setStatus('PDF を出力しました。');
-  });
+  }, exportPdfButton);
 }
 
 async function exportPptx() {
@@ -505,7 +520,7 @@ async function exportPptx() {
     const blob = await requestServerExport('pptx');
     downloadBlob(blob, `${activeSlide.fileBase}.pptx`);
     setStatus('PPTX を出力しました。');
-  });
+  }, exportPptxButton);
 }
 
 dropzone.addEventListener('dragover', (event) => {
