@@ -35,7 +35,7 @@ app.innerHTML = `
         </div>
 
         <div id="pageList" class="page-list"></div>
-        <p class="status" id="status">HTML を読み込むとページ一覧とプレビューを生成します。</p>
+        <p class="status" id="status" aria-live="polite">HTML を読み込むとページ一覧とプレビューを生成します。</p>
       </aside>
 
       <section class="panel preview-panel">
@@ -138,29 +138,78 @@ function extractSlideDimensions(doc) {
   return { width: 1280, height: 720 };
 }
 
+function scopeStylesheet(css) {
+  const SCOPE = '.embedded-document';
+  // Strip @import to prevent loading external CSS
+  css = css.replace(/@import\s+[^;]*;/gi, '');
+
+  let depth = 0;
+  const stack = []; // 'at-group' | 'at-leaf' | 'rule' — pushed on {, popped on }
+  const out = [];
+  let pendingType = null;
+
+  for (const chunk of css.split(/(\{|\})/)) {
+    if (chunk === '{') {
+      stack.push(pendingType || 'rule');
+      pendingType = null;
+      depth++;
+      out.push('{');
+    } else if (chunk === '}') {
+      stack.pop();
+      depth--;
+      out.push('}');
+    } else {
+      const trimmed = chunk.trim();
+      if (!trimmed) {
+        out.push(chunk);
+        continue;
+      }
+
+      const isAtRule = trimmed.startsWith('@');
+      if (isAtRule) {
+        pendingType = /^@(media|supports|layer|document)\b/i.test(trimmed) ? 'at-group' : 'at-leaf';
+      } else {
+        pendingType = 'rule';
+      }
+
+      const parentType = stack.length > 0 ? stack[stack.length - 1] : null;
+      const shouldScope = !isAtRule && (depth === 0 || parentType === 'at-group');
+
+      if (shouldScope) {
+        const scoped = trimmed
+          .split(',')
+          .map((s) => {
+            const t = s.trim();
+            if (!t) return s;
+            if (/^(html|body|:root)\b/.test(t)) {
+              return t.replace(/^(html|body|:root)/, SCOPE);
+            }
+            return `${SCOPE} ${t}`;
+          })
+          .join(', ');
+        out.push(scoped);
+      } else {
+        out.push(chunk);
+      }
+    }
+  }
+
+  return out.join('');
+}
+
 function buildPreviewMarkup(doc) {
-  const headNodes = [...doc.head.children].filter((node) => {
-    if (node.tagName === 'SCRIPT') {
-      return false;
-    }
+  // <link rel="stylesheet"> は外部リクエストを発生させるため除外する
+  const styleNodes = [...doc.head.children].filter((node) => node.tagName === 'STYLE');
 
-    if (node.tagName === 'LINK') {
-      const rel = node.getAttribute('rel') || '';
-      return rel.includes('stylesheet');
-    }
+  const scopedStyles = styleNodes
+    .map((node) => `<style>${scopeStylesheet(node.textContent)}</style>`)
+    .join('\n');
 
-    return node.tagName === 'STYLE';
-  });
-
-  const bodyMarkup = DOMPurify.sanitize(doc.body.innerHTML, {
-    WHOLE_DOCUMENT: false,
-    FORBID_TAGS: ['script'],
-    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover']
-  });
+  const bodyMarkup = DOMPurify.sanitize(doc.body.innerHTML);
 
   return `
     <div class="embedded-document">
-      ${headNodes.map((node) => node.outerHTML).join('\n')}
+      ${scopedStyles}
       ${bodyMarkup}
     </div>
   `;
@@ -349,7 +398,7 @@ function downloadBlob(blob, filename) {
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 async function requestServerExport(format) {

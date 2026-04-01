@@ -11,7 +11,7 @@ const host = process.env.HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.PORT || '8788', 10);
 const sharedToken = process.env.SHARED_TOKEN;
 const allowedAssetHosts = new Set(
-  (process.env.ALLOWED_ASSET_HOSTS || '')
+  (process.env.ALLOWED_ASSET_HOSTS || 'fonts.googleapis.com,fonts.gstatic.com')
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean)
@@ -65,7 +65,9 @@ app.post('/render/pptx', asyncHandler(async (request, response) => {
 
 app.use((error, _request, response, _next) => {
   console.error(error);
-  response.status(500).json({ error: error.message || 'Render failed' });
+  const status = error.status || 500;
+  const message = status < 500 ? error.message : 'Render failed';
+  response.status(status).json({ error: message });
 });
 
 app.listen(port, host, () => {
@@ -80,7 +82,9 @@ function asyncHandler(handler) {
 
 function normalizePayload(body) {
   if (!body || typeof body.html !== 'string' || !body.html.trim()) {
-    throw new Error('html is required');
+    const err = new Error('html is required');
+    err.status = 400;
+    throw err;
   }
 
   const width = sanitizeDimension(body.dimensions?.width, 1280);
@@ -819,7 +823,7 @@ async function fetchTextAsset(url) {
 
 async function fetchAllowed(url) {
   const target = new URL(url);
-  if (allowedAssetHosts.size > 0 && !allowedAssetHosts.has(target.hostname)) {
+  if (!allowedAssetHosts.has(target.hostname)) {
     return null;
   }
 
